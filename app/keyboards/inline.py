@@ -31,7 +31,7 @@ def shorten_service_name(category: str, service_name: str) -> str:
         name = name[len(cat_clear):].strip()
         
     # 2. Спеціальні скорочення для поширених груп (навіть якщо вони не в назві категорії)
-    prefixes_to_strip = ["Манікюр", "Педикюр", "Масаж", "Стрижка", "Фарбування", "Нарощування"]
+    prefixes_to_strip = ["Манікюр", "Педикюр", "Масаж", "Стрижка"]
     for p in prefixes_to_strip:
         if name.lower().startswith(p.lower()) and len(name) > len(p) + 2:
             # Тільки якщо після префікса є ще слова (н-ад "Масаж спини" -> "спини", але "Масаж" лишаємо)
@@ -65,9 +65,10 @@ def get_categories_keyboard(services: list[Service], selected_ids: set[int], is_
     for cat in categories_list:
         emoji = CATEGORY_EMOJIS.get(cat, "🔹")
         count = cat_counts.get(cat, 0)
-        label = f"{emoji} {cat}"
         if count > 0:
-            label += f" ({count})"
+            label = f"{emoji} ({count}) {cat}"
+        else:
+            label = f"{emoji} {cat}"
         callback = f"select_m_cat_{cat}" if is_master else f"select_cat_{cat}"
         builder.button(text=label, callback_data=callback)
     builder.adjust(2)

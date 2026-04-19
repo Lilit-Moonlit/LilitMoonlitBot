@@ -260,13 +260,43 @@ async def finish_master_services(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Оберіть хоча б одну послугу!", show_alert=True)
         return
     
-    # Запускаємо цикл збору цін
-    await state.update_data(services_to_price=list(selected_ids), price_index=0, prices_collected={})
+    # Отримуємо існуючі ціни з БД
+    existing_prices = await dal.get_master_services_prices(callback.from_user.id)
+    
+    # Визначаємо послуги, для яких ще немає ціни
+    services_to_price = [sid for sid in selected_ids if str(sid) not in existing_prices]
+    
+    # Залишаємо вже зібрані ціни для послуг, які були обрані і вже мали ціну
+    prices_collected = {str(sid): existing_prices[str(sid)] for sid in selected_ids if str(sid) in existing_prices}
+
+    if not services_to_price:
+        # Всі обрані послуги вже мають ціну, зберігаємо і виходимо
+        await dal.set_master_services(callback.from_user.id, prices_collected)
+        count = len(prices_collected)
+        await state.clear()
+        
+        # Видаляємо старе сповіщення з каталогом
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+            
+        await callback.message.answer(
+            f"🎉 <b>Готово!</b> {count} {'послуга збережена' if count == 1 else 'послуги збережено'}!\n\n"
+            f"Ваш профіль активний і клієнти вже можуть вас знайти. 💅",
+            reply_markup=get_master_menu_keyboard(),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+
+    # Запускаємо цикл збору цін для НОВИХ послуг
+    await state.update_data(services_to_price=list(services_to_price), price_index=0, prices_collected=prices_collected)
     await state.set_state(MasterProfileStates.entering_service_price)
     
-    first_service = await dal.get_service_by_id(selected_ids[0])
-    service_name = first_service.name if first_service else f"Послуга #{selected_ids[0]}"
-    total = len(selected_ids)
+    first_service = await dal.get_service_by_id(services_to_price[0])
+    service_name = first_service.name if first_service else f"Послуга #{services_to_price[0]}"
+    total = len(services_to_price)
     
     # Видаляємо старе сповіщення з каталогом
     try:
@@ -276,7 +306,7 @@ async def finish_master_services(callback: CallbackQuery, state: FSMContext):
     
     # Надсилаємо нове чітке повідомлення з запитом ціни
     await callback.message.answer(
-        f"💰 Тепер вкажіть ціни для кожної послуги (одна за одною).\n\n"
+        f"💰 Тепер вкажіть ціни для доданих послуг (одна за одною).\n\n"
         f"💅 <b>{html.escape(service_name)}</b> (1/{total})\n\n"
         f"Напишіть мінімальну ціну в грн (\u043dаприклад: <b>500</b>):",
         reply_markup=get_cancel_keyboard(),

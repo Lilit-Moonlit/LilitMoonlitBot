@@ -230,7 +230,8 @@ async def get_all_services() -> List[Service]:
         )
         services = [s for s in result.scalars().all() if s.category in CATALOG_CATEGORY_ORDER]
         order_map = {cat: i for i, cat in enumerate(CATALOG_CATEGORY_ORDER)}
-        return sorted(services, key=lambda s: (order_map.get(s.category, 999), s.name.lower()))
+        srv_order_map = {name: i for i, name in enumerate(CATALOG_SERVICE_NAMES)}
+        return sorted(services, key=lambda s: (order_map.get(s.category, 999), srv_order_map.get(s.name, 999)))
 
 async def get_service_by_id(service_id: int) -> Optional[Service]:
     async with async_session() as session:
@@ -255,6 +256,15 @@ async def get_master_services_full(master_id: int) -> List[dict]:
         )
         result = await session.execute(query)
         return [{"name": name, "price": price} for name, price in result.all()]
+
+async def get_master_services_prices(master_id: int) -> dict:
+    """Повертає {service_id_str: price} для існуючих послуг майстра."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(MasterService.service_id, MasterService.price)
+            .where(MasterService.master_id == master_id)
+        )
+        return {str(svc_id): price for svc_id, price in result.all()}
 
 async def master_has_services(master_id: int) -> bool:
     """Повертає True якщо майстер має хоча б одну послугу."""

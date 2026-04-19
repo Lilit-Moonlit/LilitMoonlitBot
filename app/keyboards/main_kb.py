@@ -16,7 +16,7 @@ def get_master_menu_keyboard() -> ReplyKeyboardMarkup:
     """Меню майстра з кнопкою повернення до головного меню."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="➕ Додати послугу"), KeyboardButton(text="👤 Мій профіль")],
+            [KeyboardButton(text="👤 Мій профіль")],
             [KeyboardButton(text="🏠 Головне меню"), KeyboardButton(text="🔄 /start")]
         ],
         resize_keyboard=True

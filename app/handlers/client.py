@@ -67,7 +67,7 @@ async def client_back_match_type(message: Message, state: FSMContext):
 
 @client_router.message(F.text.in_(["🔙 Назад", "Назад"]), ClientBooking.waiting_for_service_selection)
 @client_router.message(F.text.in_(["🔙 Назад", "Назад"]), ClientBooking.waiting_for_date_time)
-@client_router.message(F.text.in_(["🔙 Назад", "Назад"]), ClientBooking.waiting_for_booking_comment)
+@client_router.message(F.text.in_(["🔙 Назад", "Назад"]), ClientBooking.waiting_for_search_wishes)
 @client_router.message(F.text.in_(["🔙 Назад", "Назад"]), ClientBooking.waiting_for_negotiation)
 @client_router.message(F.text.in_(["🔙 Назад", "Назад"]), ClientBooking.waiting_for_master_response)
 @client_router.message(F.text.in_(["🔙 Назад", "Назад"]), ClientBooking.waiting_for_custom_service_description)
@@ -165,7 +165,6 @@ async def process_service_selection(callback: CallbackQuery, state: FSMContext):
 
 @client_router.callback_query(F.data == "finish_service_selection")
 async def finalize_service_selection(callback: CallbackQuery, state: FSMContext):
-    # Відновлюємо стан якщо потрібно
     current_state = await state.get_state()
     if current_state != ClientBooking.waiting_for_service_selection.state:
         await state.set_state(ClientBooking.waiting_for_service_selection)
@@ -176,15 +175,46 @@ async def finalize_service_selection(callback: CallbackQuery, state: FSMContext)
         await callback.answer("Оберіть хоча б одну послугу!", show_alert=True)
         return
         
+    await state.set_state(ClientBooking.waiting_for_search_wishes)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    
+    await callback.message.answer(
+        "📝 <b>Є особливі побажання?</b>\n"
+        "Напр.: довжина, техніка, колір, алергії — напиши або пропусти.\n\n"
+        "<i>Я виділю майстрів, у яких є ці слова в описі профілю!</i>",
+        parse_mode="HTML",
+        reply_markup=get_skip_comment_keyboard(),
+    )
+    await callback.answer()
+
+@client_router.message(ClientBooking.waiting_for_search_wishes, ~F.text.startswith("/"))
+async def process_search_wishes(message: Message, state: FSMContext):
+    await state.update_data(search_wishes=message.text)
+    await process_search_after_wishes(message, state)
+
+@client_router.callback_query(F.data == "skip_booking_comment", ClientBooking.waiting_for_search_wishes)
+async def skip_search_wishes(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(search_wishes=None)
+    await process_search_after_wishes(callback, state)
+    await callback.answer()
+
+async def process_search_after_wishes(event, state: FSMContext):
+    data = await state.get_data()
+    selected_services = data.get("selected_services", [])
+    
     if len(selected_services) > 1:
         from app.keyboards.inline import get_match_type_keyboard
         await state.set_state(ClientBooking.waiting_for_match_type)
-        await callback.message.edit_text(
+        msg_func = event.answer if hasattr(event, "answer") and not isinstance(event, CallbackQuery) else event.message.answer
+        await msg_func(
             "Як шукати майстрів?", 
             reply_markup=get_match_type_keyboard()
         )
     else:
-        await show_masters_list(callback, state, match_all=True)
+        await show_masters_list(event, state, match_all=True)
 
 @client_router.callback_query(F.data == "back_to_services")
 async def go_back_to_services(callback: CallbackQuery, state: FSMContext):
@@ -204,15 +234,20 @@ async def process_match_type(callback: CallbackQuery, state: FSMContext):
     match_all = callback.data == "match_all"
     await show_masters_list(callback, state, match_all)
 
-async def show_masters_list(callback: CallbackQuery, state: FSMContext, match_all: bool):
+async def show_masters_list(event, state: FSMContext, match_all: bool):
     data = await state.get_data()
     selected_services = [int(sid) for sid in data.get("selected_services", [])]
+    wishes = data.get("search_wishes")
+
+    message = event.message if isinstance(event, CallbackQuery) else event
+    bot = event.bot
+    user_id = event.from_user.id
 
     previous_result_message_ids = data.get("search_master_message_ids", [])
-    if callback.message and previous_result_message_ids:
+    if previous_result_message_ids:
         for message_id in previous_result_message_ids:
             try:
-                await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=message_id)
+                await bot.delete_message(chat_id=message.chat.id, message_id=message_id)
             except Exception:
                 pass
     
@@ -221,13 +256,13 @@ async def show_masters_list(callback: CallbackQuery, state: FSMContext, match_al
     if not masters_data:
         await state.update_data(search_master_message_ids=[])
         from app.keyboards.inline import get_not_found_keyboard
-        await callback.message.edit_text(
+        await message.answer(
             f"На жаль, за вашими критеріями майстрів не знайдено 😔\nСпробуйте змінити фільтри.",
             reply_markup=get_not_found_keyboard()
         )
         return
         
-    print(f"[DEBUG] Preparing to show {len(masters_data)} master(s) to user {callback.from_user.id}")
+    print(f"[DEBUG] Preparing to show {len(masters_data)} master(s) to user {user_id}")
     result_message_ids = []
     
     for md in masters_data:
@@ -236,8 +271,21 @@ async def show_masters_list(callback: CallbackQuery, state: FSMContext, match_al
         matched_services = md["matched_services"]  # послуги, що відповідають пошуку
         all_services = md["all_services"]           # всі послуги майстра
         
+        import re
         m_name = html.escape(user.name)
         m_desc = html.escape(master.description or "")
+        
+        # Highlighting logic for wishes
+        if wishes and m_desc:
+            words = re.findall(r'\b\w{4,}\b', wishes.lower())
+            roots = [w[:4] for w in words]
+            for root in roots:
+                # bolding words matching the root, ignoring case
+                m_desc = re.sub(
+                    r'(?i)\b(' + re.escape(root) + r'\w*)\b', 
+                    r'<b>\1</b>', 
+                    m_desc
+                )
         
         # --- Заголовок ---
         text = f"✨ <b>Майстер: {m_name}</b>\n"
@@ -299,17 +347,20 @@ async def show_masters_list(callback: CallbackQuery, state: FSMContext, match_al
         b.row(InlineKeyboardButton(text=f"📅 Записатись до {m_name}", callback_data=f"book_{master.user_id}"))
         
         try:
-            sent_message = await callback.message.answer(text, reply_markup=b.as_markup(), parse_mode="HTML")
+            sent_message = await message.answer(text, reply_markup=b.as_markup(), parse_mode="HTML")
             result_message_ids.append(sent_message.message_id)
         except Exception as e:
             print(f"[ERROR] Failed to send master message: {e}")
-            await callback.message.answer(f"Помилка при виводі майстра {m_name}. Спробуйте іншого.")
+            await message.answer(f"Помилка при виводі майстра {m_name}. Спробуйте іншого.")
 
     await state.update_data(search_master_message_ids=result_message_ids)
     
-    if callback.message:
-        await callback.message.delete()
-    await callback.answer()
+    if isinstance(event, CallbackQuery):
+        try:
+            await event.message.delete()
+        except:
+            pass
+        await event.answer()
 
 @client_router.callback_query(F.data.startswith("book_"))
 async def start_booking(callback: CallbackQuery, state: FSMContext):
@@ -359,59 +410,39 @@ async def process_booking_time_text(message: Message, state: FSMContext):
     data = await state.get_data()
     master_id = data.get("master_id")
     selected_services = data.get("selected_services", [])
-    first_service_id = selected_services[0] if selected_services else 1
+    wishes = data.get("search_wishes")
 
-    await state.update_data(
-        booking_dt=dt,
-        booking_service_id=first_service_id,
-    )
-    await state.set_state(ClientBooking.waiting_for_booking_comment)
-    await message.answer(
-        "📝 <b>Є особливі побажання?</b>\n"
-        "Напр.: довжина, техніка, колір, алергії — напиши або пропусти",
-        parse_mode="HTML",
-        reply_markup=get_skip_comment_keyboard(),
-    )
+    await finalize_booking_creation(message, state, master_id, selected_services, dt, wishes)
 
-
-@client_router.message(ClientBooking.waiting_for_booking_comment, ~F.text.startswith("/"))
-async def process_booking_comment(message: Message, state: FSMContext):
-    data = await state.get_data()
-    master_id = data.get("master_id")
-    selected_services = data.get("selected_services", [])
-    first_service_id = data.get("booking_service_id") or (selected_services[0] if selected_services else 1)
-    dt = data.get("booking_dt")
-    comment = message.text
-
-    await finalize_booking_creation(message, state, master_id, first_service_id, dt, comment)
-
-
-@client_router.callback_query(F.data == "skip_booking_comment", ClientBooking.waiting_for_booking_comment)
-async def skip_booking_comment(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    master_id = data.get("master_id")
-    selected_services = data.get("selected_services", [])
-    first_service_id = data.get("booking_service_id") or (selected_services[0] if selected_services else 1)
-    dt = data.get("booking_dt")
-
-    await finalize_booking_creation(callback, state, master_id, first_service_id, dt, None)
-    await callback.answer()
-
-async def finalize_booking_creation(event, state, master_id, service_id, dt, comment=None):
+async def finalize_booking_creation(event, state, master_id, selected_services, dt, comment=None):
     # event can be CallbackQuery or Message
     user_id = event.from_user.id
-    service = await dal.get_service_by_id(service_id)
-    service_name = html.escape(service.name) if service else "Послуга"
+    first_service_id = selected_services[0] if selected_services else 1
+    
+    services = []
+    for sid in selected_services:
+        s = await dal.get_service_by_id(sid)
+        if s: services.append(html.escape(s.name))
+        
+    service_names_str = ", ".join(services) if services else "Послуга"
 
     base_line = dt.strftime('%d.%m %H:%M')
     comment_clean = (comment or "").strip()
-    booking_comment = base_line if not comment_clean else f"{base_line}\n{comment_clean}"
+    
+    full_comment_lines = []
+    if len(selected_services) > 1:
+        full_comment_lines.append(f"Обрані послуги: {service_names_str}")
+    if comment_clean:
+        full_comment_lines.append(f"Особливі побажання: {comment_clean}")
+        
+    extra_comment = "\n".join(full_comment_lines)
+    booking_comment = base_line if not extra_comment else f"{base_line}\n{extra_comment}"
     
     # Створюємо запис
     booking = await dal.create_booking(
         client_id=user_id,
         master_id=master_id,
-        service_id=service_id,
+        service_id=first_service_id,
         start_time=dt,
         comment=booking_comment
     )
@@ -431,7 +462,7 @@ async def finalize_booking_creation(event, state, master_id, service_id, dt, com
         text=f"🆕 <b>Новий запис!</b>\n\n"
              f"👤 Клієнт: {client_link}\n"
              f"📞 Тел: <code>{client_phone}</code>\n"
-             f"💅 Послуга: <b>{service_name}</b>\n"
+             f"💅 Послуги: <b>{service_names_str}</b>\n"
              f"🧾 <b>Деталі запису:</b>\n<code>{details_text}</code>\n\n"
              f"Будь ласка, підтвердіть або запропонуйте інший час.",
         reply_markup=get_booking_moderation_keyboard(booking.id),
@@ -442,7 +473,7 @@ async def finalize_booking_creation(event, state, master_id, service_id, dt, com
     
     msg_text = (
         f"✅ <b>Запит відправлено!</b>\n\n"
-        f"Послуга: <b>{service_name}</b>\n"
+        f"Послуги: <b>{service_names_str}</b>\n"
         f"Ви записані на <b>{dt.strftime('%d.%m %H:%M')}</b>.\n"
         f"Очікуйте на підтвердження від майстра. ⏳"
     )
