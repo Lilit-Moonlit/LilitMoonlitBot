@@ -126,3 +126,16 @@ class Review(Base):
 
     # Relationships
     booking = relationship("Booking", back_populates="review")
+
+class SocialPostQueue(Base):
+    __tablename__ = 'social_post_queue'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ad_type = Column(String(20), nullable=False) # model or vacancy
+    text = Column(Text, nullable=False)
+    media_file_id = Column(String(255), nullable=True)
+    media_type = Column(String(10), nullable=True) # photo or video
+    status = Column(String(20), default="pending") # pending, success, failed
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    processed_at = Column(DateTime, nullable=True)

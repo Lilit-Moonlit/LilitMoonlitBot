@@ -1,5 +1,5 @@
 @echo off
-title Beauty Bot - Freya
+title Beauty Bot - Lilit
 cd /d "%~dp0"
 
 echo [1/3] Checking environment...
@@ -13,7 +13,7 @@ echo [2/3] Stopping any running bot instances...
 powershell -Command "Get-Process python* -ErrorAction SilentlyContinue | Stop-Process -Force" 2>nul
 timeout /t 1 /nobreak >nul
 
-echo [3/3] Starting Freya Bot...
+echo [3/3] Starting Lilit Bot...
 set PYTHONIOENCODING=utf-8
 venv\Scripts\python.exe -m app.main
 

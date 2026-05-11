@@ -4,9 +4,11 @@ def get_start_keyboard() -> ReplyKeyboardMarkup:
     """Головне меню — точка старту."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🔎 Знайти майстра")],
-            [KeyboardButton(text="📅 Мої записи")],
-            [KeyboardButton(text="💼 Я майстер (Реєстрація)"), KeyboardButton(text="🔄 /start")]
+            [KeyboardButton(text="🔎 Знайти майстра"), KeyboardButton(text="💼 Я майстер")],
+            [KeyboardButton(text="💅 Шукаю модель"), KeyboardButton(text="📢 Вакансії")],
+            [KeyboardButton(text="⬆️Додати оголошення⬆️")],
+            [KeyboardButton(text="📅 Мої записи"), KeyboardButton(text="🏰 Спільнота")],
+            [KeyboardButton(text="🔄 /start")]
         ],
         resize_keyboard=True,
         input_field_placeholder="Оберіть дію..."

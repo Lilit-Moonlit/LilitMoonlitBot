@@ -3,8 +3,13 @@ from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 from aiogram import Bot
-from app.database.dal import async_session
+from app.database.dal import async_session, get_next_queued_post, update_queued_post_status
 from app.database.models import Booking, User, BookingStatusEnum
+from app.config import (
+    FB_PAGE_ID_MODELS, FB_PAGE_ID_VACANCIES,
+    IG_BUSINESS_ACCOUNT_ID_MODELS, IG_BUSINESS_ACCOUNT_ID_VACANCIES
+)
+from app.utils.social_poster import SocialPoster
 
 kyiv_tz = pytz.timezone('Europe/Kyiv')
 scheduler = AsyncIOScheduler(timezone=kyiv_tz)
@@ -54,6 +59,8 @@ def setup_scheduler(bot):
     scheduler.add_job(send_reminders, 'interval', minutes=1, args=[bot])
     # Реєструємо задачу на відгуки (щохвилини)
     scheduler.add_job(check_finished_visits, 'interval', minutes=1, args=[bot])
+    # Реєструємо обробку черги Meta (кожні 20 хвилин)
+    scheduler.add_job(process_social_queue, 'interval', minutes=20, args=[bot])
     
     scheduler.start()
 
@@ -109,3 +116,51 @@ async def check_finished_visits(bot: Bot):
                 pass
                 
         await session.commit()
+
+async def process_social_queue(bot: Bot):
+    """
+    Бере один найстаріший запис з черги та публікує його в Meta.
+    """
+    post = await get_next_queued_post()
+    if not post:
+        return
+
+    print(f"[SOCIAL QUEUE] Processing post {post.id} ({post.ad_type})")
+    
+    poster = SocialPoster()
+    is_model = post.ad_type == "model"
+    
+    fb_page_id = FB_PAGE_ID_MODELS if is_model else FB_PAGE_ID_VACANCIES
+    ig_user_id = IG_BUSINESS_ACCOUNT_ID_MODELS if is_model else IG_BUSINESS_ACCOUNT_ID_VACANCIES
+    
+    media_url = None
+    is_video = post.media_type == "video"
+    
+    try:
+        # 1. Отримуємо посилання на медіа
+        if post.media_file_id:
+            file = await bot.get_file(post.media_file_id)
+            media_url = poster.get_telegram_file_url(file.file_path)
+        
+        # 2. Публікація у Facebook
+        fb_res = await poster.post_to_facebook(post.text, fb_page_id, media_url, is_video)
+        
+        # 3. Публікація в Instagram (ТІЛЬКИ ЯКЩО ЦЕ ВІДЕО)
+        ig_res = {"success": True} # За замовчуванням "успіх", якщо умови не виконані
+        if is_video and media_url:
+            ig_res = await poster.post_to_instagram(post.text, ig_user_id, media_url, is_video)
+        elif post.media_type == "photo":
+            print(f"[SOCIAL QUEUE] Skipping Instagram for photo post {post.id}")
+        
+        # 4. Оновлюємо статус у БД
+        if fb_res.get("success") and ig_res.get("success"):
+            await update_queued_post_status(post.id, "success")
+            print(f"[SOCIAL QUEUE] Post {post.id} successfully published.")
+        else:
+            error = f"FB: {fb_res.get('error', 'OK')} | IG: {ig_res.get('error', 'OK')}"
+            await update_queued_post_status(post.id, "failed", error)
+            print(f"[SOCIAL QUEUE] Post {post.id} failed: {error}")
+            
+    except Exception as e:
+        print(f"[SOCIAL QUEUE] Error processing post {post.id}: {e}")
+        await update_queued_post_status(post.id, "failed", str(e))

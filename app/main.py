@@ -8,6 +8,7 @@ from app.config import BOT_TOKEN
 from app.handlers.client import client_router
 from app.handlers.master import master_router
 from app.handlers.admin import admin_router
+from app.handlers.ads import ads_router
 
 # Force UTF-8 encoding for Windows console
 if sys.stdout.encoding != 'utf-8':
@@ -31,12 +32,34 @@ async def main():
 
     # Ініціалізуємо бота та диспетчер
     bot = Bot(token=BOT_TOKEN)
-    dp = Dispatcher(storage=MemoryStorage())
+    
+    from app.config import USE_REDIS, REDIS_URL
+    if USE_REDIS:
+        from aiogram.fsm.storage.redis import RedisStorage
+        storage = RedisStorage.from_url(REDIS_URL)
+        print(f"--- INFO: Using Redis Storage ({REDIS_URL}) ---", flush=True)
+    else:
+        storage = MemoryStorage()
+        print("--- INFO: Using Memory Storage ---", flush=True)
+        
+    dp = Dispatcher(storage=storage)
     
     # Реєструємо роутери
     dp.include_router(client_router)
     dp.include_router(master_router)
     dp.include_router(admin_router)
+    dp.include_router(ads_router)
+    
+    # Реєструємо Middleware
+    from app.middlewares.album import AlbumMiddleware
+    from app.middlewares.antiflood import AntiFloodMiddleware
+    
+    # 1. Спочатку збираємо альбоми
+    dp.message.middleware(AlbumMiddleware(latency=0.2))
+    
+    # 2. Потім перевіряємо на Anti-Flood (тільки для кнопок/тексту)
+    dp.message.middleware(AntiFloodMiddleware(limit=0.7))
+    dp.callback_query.middleware(AntiFloodMiddleware(limit=0.7))
 
     from app.utils.scheduler import setup_scheduler
     setup_scheduler(bot)

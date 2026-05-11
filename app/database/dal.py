@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import select
 
 from app.config import DATABASE_URL
-from app.database.models import User, Master, Service, MasterService, Booking, RoleEnum, BookingStatusEnum
+from app.database.models import User, Master, Service, MasterService, Booking, RoleEnum, BookingStatusEnum, SocialPostQueue, Review, ServiceProposal
 from app.catalog import CATALOG_CATEGORY_ORDER, CATALOG_SERVICE_NAMES
 
 # Створення двигуна для БД (SQLite + aiosqlite)
@@ -186,7 +186,6 @@ async def update_booking_status(booking_id: int, status: BookingStatusEnum):
 
 async def add_booking_review(booking_id: int, reviewer_role: RoleEnum, rating: int, comment: str):
     async with async_session() as session:
-        from app.database.models import Review
         # Створюємо відгук
         review = Review(
             booking_id=booking_id,
@@ -222,6 +221,36 @@ async def add_booking_review(booking_id: int, reviewer_role: RoleEnum, rating: i
                 booking.is_reviewed_by_master = True
         
         await session.commit()
+
+async def get_master_reviews(master_id: int, limit: int = None) -> List:
+    """Повертає список відгуків майстра (від найновіших)."""
+    async with async_session() as session:
+        query = (
+            select(Review, User.name)
+            .join(Booking, Booking.id == Review.booking_id)
+            .join(User, User.telegram_id == Booking.client_id)
+            .where(Booking.master_id == master_id)
+            .where(Review.reviewer_role == RoleEnum.CLIENT)
+            .order_by(Review.created_at.desc())
+        )
+        if limit:
+            query = query.limit(limit)
+            
+        result = await session.execute(query)
+        return result.all()
+
+async def get_reviews_count(master_id: int) -> int:
+    """Повертає загальну кількість відгуків клієнтів про майстра."""
+    async with async_session() as session:
+        from sqlalchemy import func
+        query = (
+            select(func.count(Review.id))
+            .join(Booking, Booking.id == Review.booking_id)
+            .where(Booking.master_id == master_id)
+            .where(Review.reviewer_role == RoleEnum.CLIENT)
+        )
+        result = await session.execute(query)
+        return result.scalar() or 0
 
 async def get_all_services() -> List[Service]:
     async with async_session() as session:
@@ -354,7 +383,6 @@ async def create_booking(client_id: int, master_id: int, service_id: int, start_
 
         # Шукаємо реальний ID послуги цього майстра (MasterService)
         # бо в таблиці bookings ми зберігаємо саме master_service_id
-        from app.database.models import MasterService, Booking, BookingStatusEnum
         ms_query = select(MasterService).where(MasterService.master_id == master_id).where(
             (MasterService.service_id == service_id) | (MasterService.id == service_id)
         )
@@ -434,7 +462,6 @@ async def update_master_profile(user_id: int, **kwargs):
 
 async def create_service_proposal(master_id: int, service_name: str, category_name: str = None):
     async with async_session() as session:
-        from app.database.models import ServiceProposal
         proposal = ServiceProposal(
             master_id=master_id,
             service_name=service_name,
@@ -446,13 +473,11 @@ async def create_service_proposal(master_id: int, service_name: str, category_na
 
 async def get_pending_proposals():
     async with async_session() as session:
-        from app.database.models import ServiceProposal
         result = await session.execute(select(ServiceProposal).where(ServiceProposal.status == "pending"))
         return result.scalars().all()
 
 async def approve_service_proposal(proposal_id: int):
     async with async_session() as session:
-        from app.database.models import ServiceProposal
         result = await session.execute(select(ServiceProposal).where(ServiceProposal.id == proposal_id))
         proposal = result.scalars().first()
         if proposal:
@@ -463,3 +488,36 @@ async def approve_service_proposal(proposal_id: int):
             await session.commit()
             await session.refresh(service)
             return service
+
+async def add_to_post_queue(ad_type: str, text: str, media_file_id: str = None, media_type: str = None):
+    async with async_session() as session:
+        post = SocialPostQueue(
+            ad_type=ad_type,
+            text=text,
+            media_file_id=media_file_id,
+            media_type=media_type,
+            status="pending"
+        )
+        session.add(post)
+        await session.commit()
+        return post
+
+async def get_next_queued_post() -> Optional[SocialPostQueue]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(SocialPostQueue)
+            .where(SocialPostQueue.status == "pending")
+            .order_by(SocialPostQueue.created_at.asc())
+            .limit(1)
+        )
+        return result.scalars().first()
+
+async def update_queued_post_status(post_id: int, status: str, error_message: str = None):
+    async with async_session() as session:
+        result = await session.execute(select(SocialPostQueue).where(SocialPostQueue.id == post_id))
+        post = result.scalars().first()
+        if post:
+            post.status = status
+            post.error_message = error_message
+            post.processed_at = datetime.utcnow()
+            await session.commit()

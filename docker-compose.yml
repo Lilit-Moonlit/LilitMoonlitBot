@@ -1,6 +1,17 @@
 version: '3.8'
 
 services:
+  app:
+    build: .
+    container_name: beauty_bot_app
+    restart: always
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - db
+      - redis
+
   db:
     image: postgres:15-alpine
     container_name: beauty_bot_db

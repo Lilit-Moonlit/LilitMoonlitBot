@@ -1,13 +1,13 @@
 Write-Host "[1/2] Checking environment..." -ForegroundColor Cyan
-$pythonPath = Join-Path $PSScriptRoot ".venv312\Scripts\python.exe"
+$pythonPath = Join-Path $PSScriptRoot "venv\Scripts\python.exe"
 
 if (!(Test-Path $pythonPath)) {
-    Write-Host "ERROR: Virtual environment '.venv312' not found in $PSScriptRoot" -ForegroundColor Red
+    Write-Host "ERROR: Virtual environment 'venv' not found in $PSScriptRoot" -ForegroundColor Red
     Read-Host "Press Enter to exit..."
     exit
 }
 
-Write-Host "[2/2] Starting Freya Bot..." -ForegroundColor Green
+Write-Host "[2/2] Starting Lilit Bot..." -ForegroundColor Green
 $env:PYTHONIOENCODING = "utf-8"
 & $pythonPath -m app.main
 

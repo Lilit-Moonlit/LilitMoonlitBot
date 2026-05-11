@@ -1,14 +1,12 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
+from app.config import ADMIN_USERNAMES
 from app.database import dal
 
 admin_router = Router()
 
-# Список нікнеймів адміністраторів (для простоти)
-ADMIN_USERNAMES = ["denisbelii"]
-
 def is_admin(username: str) -> bool:
-    return username and username.lower() in ADMIN_USERNAMES
+    return username and username.lower() in [u.lower().strip() for u in ADMIN_USERNAMES]
 
 @admin_router.callback_query(F.data.startswith("admin_approve_"))
 async def process_admin_approve(callback: CallbackQuery):

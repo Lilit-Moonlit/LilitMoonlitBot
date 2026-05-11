@@ -21,6 +21,7 @@ def get_skip_comment_keyboard():
     return builder.as_markup()
 
 @client_router.message(CommandStart())
+@client_router.message(F.text == "🔄 /start")
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     user = await dal.get_user(message.from_user.id)
@@ -79,6 +80,25 @@ async def client_back_to_main(message: Message, state: FSMContext):
 async def cancel_action(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("🏠 Головне меню:", reply_markup=get_start_keyboard())
+
+@client_router.message(F.text.contains("Спільнота"))
+async def community_info(message: Message):
+    text = (
+        "👥 <b>Наша спільнота у Telegram</b>\n\n"
+        "Приєднуйтесь до нашого чату! Тут ви зможете знайти нових майстрів, "
+        "поділитися відгуками та отримати підтримку.\n\n"
+        "🔗 <b>Посилання на вступ:</b>\n"
+        "https://t.me/LilitSociety"
+    )
+    
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="Приєднатися до групи 👥", url="https://t.me/LilitSociety"))
+    
+    await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
+
 
 @client_router.message(F.text.contains("Знайти майстра"))
 async def start_find_master(message: Message, state: FSMContext):
@@ -183,8 +203,9 @@ async def finalize_service_selection(callback: CallbackQuery, state: FSMContext)
     
     await callback.message.answer(
         "📝 <b>Є особливі побажання?</b>\n"
-        "Напр.: довжина, техніка, колір, алергії — напиши або пропусти.\n\n"
-        "<i>Я виділю майстрів, у яких є ці слова в описі профілю!</i>",
+        "НАПИШИ: техніка, колір,... або ПРОПУСТИТИ.\n\n"
+        "Я додам це к запису до майстра!\n"
+        "Я <b>виділю</b> це в пошуку!",
         parse_mode="HTML",
         reply_markup=get_skip_comment_keyboard(),
     )
@@ -287,8 +308,14 @@ async def show_masters_list(event, state: FSMContext, match_all: bool):
                     m_desc
                 )
         
-        # --- Заголовок ---
-        text = f"✨ <b>Майстер: {m_name}</b>\n"
+        # --- Отримання відгуків ---
+        reviews_count = await dal.get_reviews_count(master.user_id)
+        last_reviews = await dal.get_master_reviews(master.user_id, limit=3)
+        
+        # --- Заголовок з рейтингом ---
+        rating_stars = "⭐" * int(master.rating or 0)
+        rating_text = f" {rating_stars} ({master.rating})" if master.rating and master.rating > 0 else " (Немає відгуків)"
+        text = f"✨ <b>Майстер: {m_name}</b>{rating_text}\n"
         
         # --- Контакти (клікабельні) ---
         socials = []
@@ -318,6 +345,16 @@ async def show_masters_list(event, state: FSMContext, match_all: bool):
         if m_desc:
             text += f"\n📝 <b>Про майстра:</b>\n{m_desc}\n"
         
+        # --- Блок відгуків ---
+        if last_reviews:
+            text += f"\n💬 <b>Останні відгуки ({reviews_count}):</b>\n"
+            for rev, reviewer_name in last_reviews:
+                stars = "⭐" * rev.rating
+                comment = rev.comment or "<i>(без коментаря)</i>"
+                # Обрізаємо занадто довгі відгуки для прев'ю
+                if len(comment) > 60: comment = comment[:57] + "..."
+                text += f"  • {stars} <b>{html.escape(reviewer_name)}</b>: {html.escape(comment)}\n"
+        
         # --- Обрані клієнтом послуги (виділені) ---
         selected_set = set(selected_services)
         min_price = min((s["price"] for s in matched_services), default=0)
@@ -330,7 +367,7 @@ async def show_masters_list(event, state: FSMContext, match_all: bool):
         other_services = [s for s in all_services if s["service_id"] not in selected_set]
         if other_services:
             text += f"\n💅 <b>Інші послуги:</b>\n"
-            for s in other_services[:5]: # показуємо перші 5
+            for s in other_services[:3]: # показуємо перші 3 для компактності
                 text += f"  • {html.escape(s['service_name'])} — {s['price']} грн\n"
         
         text += f"\n💰 <b>Разом:</b> від {min_price} грн"

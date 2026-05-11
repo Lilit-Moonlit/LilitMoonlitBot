@@ -15,7 +15,10 @@ async def sync_services_catalog() -> None:
         for category, service_names in SERVICE_CATALOG.items():
             for service_name in service_names:
                 query = await session.execute(
-                    select(Service).where(Service.name == service_name)
+                    select(Service).where(
+                        Service.name == service_name,
+                        Service.category == category
+                    )
                 )
                 service = query.scalars().first()
 
@@ -23,11 +26,6 @@ async def sync_services_catalog() -> None:
                     service = Service(name=service_name, category=category)
                     session.add(service)
                     created += 1
-                    continue
-
-                if service.category != category:
-                    service.category = category
-                    updated += 1
 
         await session.commit()
 

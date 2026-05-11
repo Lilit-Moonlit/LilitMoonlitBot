@@ -5,8 +5,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 
 from app.keyboards.main_kb import get_cancel_keyboard, get_master_menu_keyboard, get_start_keyboard
-from app.keyboards.inline import get_master_services_keyboard, get_social_links_menu, get_moderation_keyboard
-from app.states.registration import MasterRegistration, ServiceAddition
+from app.keyboards.inline import get_master_services_keyboard, get_social_links_menu
+from app.states.registration import MasterRegistration
 from app.states.master_profile import MasterProfileStates
 from app.states.review_states import ReviewStates
 from app.database import dal
@@ -14,7 +14,7 @@ from app.database.models import RoleEnum, BookingStatusEnum
 
 master_router = Router()
 
-@master_router.message(F.text == "💼 Я майстер (Реєстрація)")
+@master_router.message(F.text == "💼 Я майстер")
 async def start_master_registration(message: Message, state: FSMContext):
     master = await dal.get_master(message.from_user.id)
     if master:
@@ -231,14 +231,15 @@ async def process_proposing_service(message: Message, state: FSMContext):
     # Створюємо пропозицію
     await dal.create_service_proposal(message.from_user.id, service_name)
     
-    # Повідомлення адміну (Спрощено: надсилаємо тому самому користувачу якщо він адмін, 
-    # або в логах було б повідомлення @denisbelii)
-    # В реальності тут має бути send_message для ADMIN_ID
-    
     await message.answer(
         f"Дякуємо! Послуга '{service_name}' відправлена на модерацію. "
         "Вона з'явиться в списку після підтвердження адміністратором."
     )
+    # Повертаємо стан до вибору категорій
+    await state.set_state(MasterProfileStates.choosing_service_category)
+    services = await dal.get_all_services()
+    data = await state.get_data()
+    selected = set(data.get("selected_services", []))
     from app.keyboards.inline import get_categories_keyboard
     await message.answer("Ви можете обрати ще інші існуючі послуги:", reply_markup=get_categories_keyboard(services, selected, is_master=True))
 
@@ -399,7 +400,6 @@ async def show_profile(message: Message):
     services = await dal.get_master_services_full(message.from_user.id)
     services_text = ""
     if services:
-        import html
         services_text = "\n".join([f"  • {html.escape(s['name'])} — {s['price']} грн" for s in services])
     else:
         services_text = "<i>Послуги ще не додані</i>"
@@ -411,8 +411,6 @@ async def show_profile(message: Message):
         f"🔗 <b>Ваші контакти для зв'язку:</b>\n{socials_text}\n"
     )
 
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    from aiogram.types import InlineKeyboardButton
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="📝 Змінити опис", callback_data="master_edit_desc"))
     kb.row(InlineKeyboardButton(text="📱 Додати/Змінити контакти", callback_data="master_edit_contacts"))
@@ -499,7 +497,7 @@ async def master_confirm_booking(callback: CallbackQuery):
                      f"🗓 Час: <b>{booking.start_time.strftime('%d.%m %H:%M')}</b>\n"
                      f"👤 Майстер: {m_link}\n"
                      f"📞 Тел: <code>{m_phone}</code>\n\n"
-                     f"Чекаємо на вас! ✨",
+                     f"Я нагадаю вам про візит за годину. До зустрічі! ✨",
                 parse_mode="HTML"
             )
     except:
@@ -544,9 +542,13 @@ async def master_propose_start(callback: CallbackQuery, state: FSMContext):
 async def process_master_propose_time(message: Message, state: FSMContext):
     time_str = message.text.strip()
     from app.utils.time_parser import parse_datetime_flexible
+    from datetime import datetime
     try:
-        # Просто перевіряємо формат
-        parse_datetime_flexible(time_str)
+        # Перевіряємо формат та чи не в минулому
+        dt = parse_datetime_flexible(time_str)
+        if dt < datetime.now():
+             await message.answer("❌ Ви намагаєтесь запропонувати час, який вже минув. Оберіть час у майбутньому.")
+             return
     except ValueError:
         await message.answer("❌ Невірний формат! Будь ласка, введіть дату та час, наприклад: 14.04 12:00")
         return
@@ -560,9 +562,6 @@ async def process_master_propose_time(message: Message, state: FSMContext):
         await message.answer("Помилка: запис не знайдено.")
         return
 
-    # Отримуємо об'єкт datetime для красивого виводу
-    from app.utils.time_parser import parse_datetime_flexible
-    dt = parse_datetime_flexible(time_str)
     formatted_time = dt.strftime("%d.%m %H:%M")
 
     # Оновлюємо час у БД зі статусом PROPOSED
