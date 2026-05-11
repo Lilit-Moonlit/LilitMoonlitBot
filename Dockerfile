@@ -26,4 +26,5 @@ COPY . .
 RUN mkdir -p data
 
 # Run the application
-CMD ["python", "debug_start.py"]
+CMD ["python", "-m", "app.main"]
+
