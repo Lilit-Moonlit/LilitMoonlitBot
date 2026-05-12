@@ -64,6 +64,22 @@ async def main():
     from app.utils.scheduler import setup_scheduler
     setup_scheduler(bot)
     
+    # Запускаємо веб-сервер для Health Check (потрібно для Render)
+    from aiohttp import web
+    async def handle_health_check(request):
+        return web.Response(text="OK")
+
+    app = web.Application()
+    app.router.add_get("/", handle_health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    # Render передає порт через змінну оточення PORT
+    port = int(os.getenv("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"--- INFO: Health check server started on port {port} ---", flush=True)
+
     # Запускаємо поллінг (постійне опитування серверів Telegram)
     await bot.delete_webhook(drop_pending_updates=True)
     
@@ -71,9 +87,13 @@ async def main():
     print("SUCCESS: Bot is running and ready!", flush=True)
     print("---" * 10, flush=True)
     
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await runner.cleanup()
 
 if __name__ == "__main__":
+    import os
     print("Initializing...", flush=True)
     try:
         asyncio.run(main())
