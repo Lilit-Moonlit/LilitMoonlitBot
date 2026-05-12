@@ -254,13 +254,10 @@ async def get_reviews_count(master_id: int) -> int:
 
 async def get_all_services() -> List[Service]:
     async with async_session() as session:
-        result = await session.execute(
-            select(Service).where(Service.name.in_(CATALOG_SERVICE_NAMES))
-        )
+        result = await session.execute(select(Service))
         services = [s for s in result.scalars().all() if s.category in CATALOG_CATEGORY_ORDER]
         order_map = {cat: i for i, cat in enumerate(CATALOG_CATEGORY_ORDER)}
-        srv_order_map = {name: i for i, name in enumerate(CATALOG_SERVICE_NAMES)}
-        return sorted(services, key=lambda s: (order_map.get(s.category, 999), srv_order_map.get(s.name, 999)))
+        return sorted(services, key=lambda s: (order_map.get(s.category, 999), s.name))
 
 async def get_service_by_id(service_id: int) -> Optional[Service]:
     async with async_session() as session:
