@@ -2,6 +2,7 @@ import asyncio
 import logging
 import sys
 import io
+import os
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage # Пізніше замінимо на Redis
 from app.config import BOT_TOKEN
@@ -93,7 +94,6 @@ async def main():
         await runner.cleanup()
 
 if __name__ == "__main__":
-    import os
     print("Initializing...", flush=True)
     try:
         asyncio.run(main())
