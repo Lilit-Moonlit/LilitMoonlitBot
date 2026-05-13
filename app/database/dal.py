@@ -257,7 +257,22 @@ async def get_all_services() -> List[Service]:
         result = await session.execute(select(Service))
         services = [s for s in result.scalars().all() if s.category in CATALOG_CATEGORY_ORDER]
         order_map = {cat: i for i, cat in enumerate(CATALOG_CATEGORY_ORDER)}
-        return sorted(services, key=lambda s: (order_map.get(s.category, 999), s.name))
+        
+        # Сортуємо: 1. Категорія (за CATALOG_CATEGORY_ORDER), 
+        #           2. Популярність (за спаданням), 
+        #           3. Назва (алфавітно)
+        return sorted(services, key=lambda s: (order_map.get(s.category, 999), -(s.popularity or 0), s.name))
+
+async def increment_service_popularity(service_id: int):
+    """Збільшує лічильник кліків для послуги."""
+    async with async_session() as session:
+        from sqlalchemy import update
+        await session.execute(
+            update(Service)
+            .where(Service.id == service_id)
+            .values(popularity=Service.popularity + 1)
+        )
+        await session.commit()
 
 async def get_service_by_id(service_id: int) -> Optional[Service]:
     async with async_session() as session:

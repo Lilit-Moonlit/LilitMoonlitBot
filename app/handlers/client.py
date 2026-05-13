@@ -173,6 +173,8 @@ async def process_service_selection(callback: CallbackQuery, state: FSMContext):
         selected_services.remove(service_id)
     else:
         selected_services.append(service_id)
+        # Збільшуємо популярність при виборі
+        await dal.increment_service_popularity(service_id)
         
     await state.update_data(selected_services=selected_services)
     

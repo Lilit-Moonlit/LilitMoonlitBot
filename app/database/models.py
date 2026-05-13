@@ -73,6 +73,7 @@ class Service(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False)
     category = Column(String(100), nullable=True) # наприклад: Манікюр, Вії, Брови
+    popularity = Column(Integer, default=0) # Кількість кліків
 
     master_services = relationship("MasterService", back_populates="service", cascade="all, delete-orphan")
 
