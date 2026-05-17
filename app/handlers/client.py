@@ -120,13 +120,13 @@ async def start_find_master(message: Message, state: FSMContext):
 
 @client_router.callback_query(F.data.startswith("select_cat_"))
 async def process_category_selection(callback: CallbackQuery, state: FSMContext):
+    category = callback.data.replace("select_cat_", "")
     # Відновлюємо стан якщо бот перезапустився (MemoryStorage скинув стан)
     current_state = await state.get_state()
     if current_state != ClientBooking.waiting_for_service_selection.state:
         await state.set_state(ClientBooking.waiting_for_service_selection)
         await state.update_data(selected_services=[])
 
-    category = callback.data.replace("select_cat_", "")
     await state.update_data(current_category=category)
     
     services = await dal.get_all_services()
@@ -159,12 +159,12 @@ async def back_to_categories_callback(callback: CallbackQuery, state: FSMContext
 
 @client_router.callback_query(F.data.startswith("serv_"))
 async def process_service_selection(callback: CallbackQuery, state: FSMContext):
+    service_id = int(callback.data.split("_")[1])
     # Відновлюємо стан якщо потрібно
     current_state = await state.get_state()
     if current_state != ClientBooking.waiting_for_service_selection.state:
         await state.set_state(ClientBooking.waiting_for_service_selection)
 
-    service_id = int(callback.data.split("_")[1])
     data = await state.get_data()
     selected_services = data.get("selected_services", [])
     current_category = data.get("current_category")
@@ -265,18 +265,20 @@ async def show_masters_list(event, state: FSMContext, match_all: bool):
     message = event.message if isinstance(event, CallbackQuery) else event
     bot = event.bot
     user_id = event.from_user.id
-
-    previous_result_message_ids = data.get("search_master_message_ids", [])
-    if previous_result_message_ids:
-        for message_id in previous_result_message_ids:
-            try:
-                await bot.delete_message(chat_id=message.chat.id, message_id=message_id)
-            except Exception:
-                pass
     
+    # Видаляємо попередні результати, якщо вони є
+    old_ids = data.get("search_master_message_ids", [])
+    if old_ids:
+        for msg_id in old_ids:
+            try:
+                await bot.delete_message(chat_id=message.chat.id, message_id=msg_id)
+            except:
+                pass
+
     masters_data = await dal.get_masters_by_services(selected_services, match_all=match_all)
     
     if not masters_data:
+        print("[DEBUG] show_masters_list: no masters found")
         await state.update_data(search_master_message_ids=[])
         from app.keyboards.inline import get_not_found_keyboard
         await message.answer(
@@ -285,7 +287,6 @@ async def show_masters_list(event, state: FSMContext, match_all: bool):
         )
         return
         
-    print(f"[DEBUG] Preparing to show {len(masters_data)} master(s) to user {user_id}")
     result_message_ids = []
     
     for md in masters_data:
